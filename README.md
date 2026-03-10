@@ -34,39 +34,19 @@ Expire (cron)          OPTIMISTIC        Bulk UPDATE WHERE PENDING AND expiresAt
 
 This is the same mixed approach Alex Xu recommends: optimistic for high-throughput paths, pessimistic for critical state transitions.
 
-### Why SQS (LocalStack) instead of BullMQ?
+### Why SQS (LocalStack) instead of other simple queue events?
 
 Three reasons:
 
 **1. Message durability when the system goes down.** This is the critical scenario: the user pays, a confirmation message enters the queue, and the system crashes. With BullMQ, jobs live in Redis inside the same infrastructure — if the app goes down for more than 5 minutes, the cron revives and expires the reservation before the worker processes the confirmation. The user paid but lost their seats.
 
-With SQS, messages persist independently of the application. When the system comes back up, the consumer processes pending confirmations before the cron runs its next sweep. SQS messages have a configurable visibility timeout and can survive days in the queue.
+With SQS, messages persist independently of the application. When the system comes back up, the consumer processes pending confirmations before the cron runs its next sweep(or we disable the cron run SQS and finish processings before run again) SQS messages have a configurable visibility timeout and can survive days in the queue.
 
 **2. Native DLQ without extra code.** SQS Dead Letter Queues are a first-class AWS feature — you declare a `RedrivePolicy` with `maxReceiveCount` and SQS automatically moves failed messages after N attempts. No event listeners, no manual job movement, no `removeOnFail: false` workaround.
 
 **3. Idempotency belongs in one layer, not two.** BullMQ's `jobId` deduplication creates a second idempotency layer that duplicates what the database `@unique` constraint already does. The queue should be just transport — it doesn't own deduplication logic.
 
 Stack: `@ssut/nestjs-sqs` (v3.0.1, decorator-based like BullMQ) + LocalStack for local development. In production, swap the endpoint URL — zero code changes.
-
-### Why a grace period on expiration?
-
-The naive approach expires any reservation where `expiresAt < NOW()`. This is dangerous:
-
-```
-10:00  User reserves seat (PENDING, expires 10:05)
-10:03  User pays → confirmation message enters SQS
-10:04  System crashes
-10:07  System recovers
-10:07  Cron: "expiresAt < NOW()" → REJECTED (user loses seats despite paying)
-10:07  SQS consumer: processes confirmation → "not PENDING" → FAILS
-```
-
-The fix: a **2-minute grace period**. The confirm allows up to 2 minutes past `expiresAt`. The cron only expires reservations past the grace period. This gives the system time to process queued confirmations after recovery.
-
-```
-Confirm:  WHERE expiresAt > NOW() - INTERVAL '2 minutes'
-Cron:     WHERE expiresAt < NOW() - INTERVAL '2 minutes'
-```
 
 ### Why idempotency lives on the Reservation table?
 
@@ -118,7 +98,7 @@ Each layer is independent. If one has a bug, the other two catch it.
                            │
                            ▼
                     ┌─────────────┐
-                    │   PENDING   │ ← timer: 5 min + 2 min grace
+                    │   PENDING   │ ← timer: 5 min 
                     └──────┬──────┘
                            │
             ┌──────────────┼──────────────┐
@@ -208,6 +188,43 @@ LocalStack runs SQS locally. Queues are created via CLI on `docker compose up`. 
 
 ---
 
+## API Endpoints
+
+### Reservations
+
+| Method | Endpoint | Body | Response | Description |
+|--------|----------|------|----------|-------------|
+| `POST` | `/reservations` | `{ idempotencyKey, eventId, seatIds[] }` | `201` Reservation with seats | Create reservation (PENDING), seats become HELD |
+| `GET` | `/reservations/:id` | — | `200` Reservation with seats | Get reservation details |
+| `POST` | `/reservations/:id/confirm` | `{ idempotencyKey }` | `202` `{ status: "processing" }` | Enqueue confirmation via SQS |
+| `POST` | `/reservations/:id/cancel` | `{ reason? }` | `200` Cancelled reservation | Cancel reservation, seats return to AVAILABLE |
+
+### Seats
+
+| Method | Endpoint | Query params | Response | Description |
+|--------|----------|-------------|----------|-------------|
+| `POST` | `/events/:eventId/seats/generate` | — | `201` `{ generated, eventId }` | Generate EventSeats from theater layout |
+| `GET` | `/events/:eventId/seats` | `?status=` `?section=` | `200` Seats grouped by section | List seats with optional filters |
+| `GET` | `/events/:eventId/seats/stats` | — | `200` `{ available, held, booked, total }` | Seat counts by status |
+
+### Monitoring & Health
+
+| Method | Endpoint | Response | Description |
+|--------|----------|----------|-------------|
+| `GET` | `/monitoring/stats` | `200` JSON stats | Reservation counts, seat stats, recent audit log |
+| `GET` | `/monitoring/dashboard` | `200` HTML | Live dashboard polling every 2s |
+| `GET` | `/health` | `200` Health check | PostgreSQL + SQS status |
+
+### Error Responses
+
+| Status | When |
+|--------|------|
+| `400` | Invalid body (class-validator) |
+| `404` | Reservation or event not found |
+| `409` | Seats unavailable, invalid state transition, duplicate idempotency key |
+
+---
+
 ## Monitoring
 
 All served from the same NestJS process, zero additional containers:
@@ -227,8 +244,8 @@ The `AuditLog` table is the single source of truth. Every state transition write
 - A theater hosts **multiple events**; the same physical seat is sold independently per event
 - A user can reserve **multiple seats** in one operation (e.g., 4 tickets for a family)
 - Sections (Orchestra, Mezzanine, Balcony) exist with different pricing per event
-- **"Auto-cancel after 5 minutes"** means REJECTED (system action) with a 2-minute grace period for system recovery
-- The cron runs every minute; with grace period, effective expiration is ~7 minutes worst case
+- **"Auto-cancel after 5 minutes"** means REJECTED (system action) via cron
+- The cron runs every minute; worst case a reservation lives ~6 minutes before expiration
 - **"Real-time monitoring"** means polling every 2 seconds
 - **No user authentication** (challenge explicitly excludes this)
 - **No payment system** (challenge explicitly excludes this) — confirmation simulates a successful payment webhook
@@ -272,27 +289,19 @@ The `AuditLog` table is the single source of truth. Every state transition write
 - pnpm
 - Docker & Docker Compose
 - [mprocs](https://github.com/pvolok/mprocs) (optional, for smooth local dev)
-- AWS CLI (for LocalStack queue creation)
 
 ## Running Locally
 
+
+is highly recommended to install postgres and run ./dev.sh this uses mprocs that allows you to have running multiple process on same console
 ```bash
 # Clone and install
 git clone <repo-url> && cd theater-reservation
 cp .env.example .env
 pnpm install
 
-# Start infrastructure (postgres + localstack)
+# Start infrastructure (postgres + localstack + auto-creates SQS queues)
 docker compose up -d
-
-# Create SQS queues in LocalStack
-aws --endpoint-url=http://localhost:4566 sqs create-queue \
-  --queue-name reservation-confirm-dlq
-aws --endpoint-url=http://localhost:4566 sqs create-queue \
-  --queue-name reservation-confirm \
-  --attributes '{
-    "RedrivePolicy": "{\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:000000000000:reservation-confirm-dlq\",\"maxReceiveCount\":\"3\"}"
-  }'
 
 # Setup database
 pnpm dlx prisma migrate deploy
@@ -300,10 +309,9 @@ pnpm dlx prisma db seed
 
 # Start API
 pnpm run start:dev
-
-# Or use mprocs (starts infra + api + prisma studio)
-mprocs
 ```
+
+SQS queues are created automatically by `init-localstack.sh` mounted into the LocalStack container.
 
 ### Available endpoints
 

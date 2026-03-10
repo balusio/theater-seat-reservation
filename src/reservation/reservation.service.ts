@@ -16,7 +16,6 @@ import { transitionReservation } from '../common/helpers/transition-reservation'
 @Injectable()
 export class ReservationService {
   private readonly ttlMinutes: number;
-  private readonly gracePeriodMinutes: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -24,9 +23,6 @@ export class ReservationService {
     private readonly config: ConfigService,
   ) {
     this.ttlMinutes = Number(this.config.get('RESERVATION_TTL_MINUTES') ?? 5);
-    this.gracePeriodMinutes = Number(
-      this.config.get('RESERVATION_GRACE_PERIOD_MINUTES') ?? 2,
-    );
   }
 
   async create(dto: CreateReservationDto) {
@@ -123,8 +119,6 @@ export class ReservationService {
   }
 
   async confirm(reservationId: string) {
-    const gracePeriodMs = this.gracePeriodMinutes * 60 * 1000;
-
     return this.prisma.$transaction(async (tx) => {
       const [reservation] = await tx.$queryRaw<any[]>`
         SELECT * FROM "Reservation"
@@ -135,22 +129,6 @@ export class ReservationService {
 
       if (!reservation) {
         throw new ConflictException('Reservation not found or not pending');
-      }
-
-      const graceDeadline = new Date(
-        new Date(reservation.expiresAt).getTime() + gracePeriodMs,
-      );
-
-      if (new Date() > graceDeadline) {
-        await transitionReservation(
-          tx,
-          reservationId,
-          ReservationStatus.PENDING,
-          ReservationStatus.REJECTED,
-          'worker',
-          { reason: 'expired_during_confirmation' },
-        );
-        throw new ConflictException('Reservation expired');
       }
 
       await transitionReservation(

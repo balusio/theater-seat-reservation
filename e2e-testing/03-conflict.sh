@@ -9,18 +9,19 @@ echo "========================================="
 KEY1=$(uuidgen | tr '[:upper:]' '[:lower:]')
 KEY2=$(uuidgen | tr '[:upper:]' '[:lower:]')
 
-# Use seats that are likely available (higher IDs)
-SEAT_A=10
-SEAT_B=11
+SEAT_A=$(seat_id 10)
+SEAT_B=$(seat_id 11)
+
+info "Using seats: $SEAT_A, $SEAT_B"
 
 # --------------------------------------------------
 # A) First reservation — should succeed
 # --------------------------------------------------
-info "First reservation for seats [$SEAT_A, $SEAT_B]..."
+info "First reservation for seats..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$KEY1\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [$SEAT_A, $SEAT_B]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT_A\", \"$SEAT_B\"]
 }")
 assert_status "$response" 201 "First reservation"
 RES1_ID=$(json_field "$response" '.id')
@@ -32,8 +33,8 @@ info "Reservation 1: $RES1_ID"
 info "Second reservation for same seats (should conflict)..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$KEY2\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [$SEAT_A, $SEAT_B]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT_A\", \"$SEAT_B\"]
 }")
 assert_status "$response" 409 "Conflict on double booking"
 
@@ -47,8 +48,8 @@ assert_status "$response" 200 "Cancel first reservation"
 info "Retrying second reservation after cancel..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$KEY2\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [$SEAT_A, $SEAT_B]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT_A\", \"$SEAT_B\"]
 }")
 assert_status "$response" 201 "Retry after cancel succeeds"
 RES2_ID=$(json_field "$response" '.id')

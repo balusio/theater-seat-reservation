@@ -73,7 +73,6 @@ describe('ReservationService', () => {
             get: jest.fn((key: string) => {
               const map: Record<string, string> = {
                 RESERVATION_TTL_MINUTES: '5',
-                RESERVATION_GRACE_PERIOD_MINUTES: '2',
               };
               return map[key];
             }),
@@ -254,13 +253,9 @@ describe('ReservationService', () => {
   // ─── CONFIRM ──────────────────────────────────────────────
 
   describe('confirm', () => {
-    it('should confirm a PENDING reservation within grace period', async () => {
+    it('should confirm a PENDING reservation', async () => {
       tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() + 60_000), // future
-        },
+        { id: RESERVATION_ID, status: 'PENDING' },
       ]);
       tx.reservation.update.mockResolvedValue({});
       tx.eventSeat.updateMany.mockResolvedValue({});
@@ -290,65 +285,6 @@ describe('ReservationService', () => {
           }),
         }),
       );
-    });
-
-    it('should confirm even if expiresAt is past but within grace period', async () => {
-      // expiresAt 1 min ago, grace = 2 min → still valid
-      tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() - 60_000),
-        },
-      ]);
-      tx.reservation.update.mockResolvedValue({});
-      tx.eventSeat.updateMany.mockResolvedValue({});
-      tx.auditLog.create.mockResolvedValue({});
-
-      await service.confirm(RESERVATION_ID);
-
-      expect(tx.reservation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'CONFIRMED' }),
-        }),
-      );
-    });
-
-    it('should reject and throw if expired past grace period', async () => {
-      // expiresAt 5 min ago, grace = 2 min → expired
-      tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() - 5 * 60 * 1000),
-        },
-      ]);
-      tx.reservation.update.mockResolvedValue({});
-      tx.eventSeat.updateMany.mockResolvedValue({});
-      tx.reservationSeat.updateMany.mockResolvedValue({});
-      tx.auditLog.create.mockResolvedValue({});
-
-      await expect(service.confirm(RESERVATION_ID)).rejects.toThrow(
-        ConflictException,
-      );
-
-      // Should have set REJECTED
-      expect(tx.reservation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'REJECTED' }),
-        }),
-      );
-      // Seats released
-      expect(tx.eventSeat.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { status: 'AVAILABLE' },
-        }),
-      );
-      // ReservationSeats deactivated
-      expect(tx.reservationSeat.updateMany).toHaveBeenCalledWith({
-        where: { reservationId: RESERVATION_ID },
-        data: { isActive: false },
-      });
     });
 
     it('should throw ConflictException if reservation not found or not PENDING', async () => {

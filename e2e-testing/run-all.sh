@@ -1,6 +1,5 @@
 #!/bin/bash
 # Run all E2E tests in sequence
-set -e
 
 DIR="$(dirname "$0")"
 source "$DIR/config.sh"
@@ -13,24 +12,21 @@ echo "║   Event ID: $EVENT_ID"
 echo "╚═══════════════════════════════════════════╝"
 echo ""
 
-# Check server is running
-info "Checking server connectivity..."
-if ! curl -s -o /dev/null -w "%{http_code}" "${BASE_URL}/health" | grep -q "200"; then
-  fail "Server not reachable at $BASE_URL"
-  echo "  Make sure the app is running: pnpm start:dev"
-  exit 1
-fi
-pass "Server is reachable"
-echo ""
-
 # Check jq is installed
 if ! command -v jq &> /dev/null; then
   fail "jq is required. Install: brew install jq"
   exit 1
 fi
 
+# Setup must succeed before running tests
+info "Running setup..."
+bash "$DIR/00-setup.sh"
+if [ $? -ne 0 ]; then
+  fail "Setup failed — aborting tests"
+  exit 1
+fi
+
 TESTS=(
-  "00-health.sh"
   "01-seats.sh"
   "02-reservation-flow.sh"
   "03-conflict.sh"
