@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReservationStatus } from '../common/constants/state-machine';
+import { transitionReservation } from '../common/helpers/transition-reservation';
 
 @Injectable()
 export class SchedulerService {
@@ -30,40 +32,27 @@ export class SchedulerService {
 
       await this.prisma.$transaction(async (tx) => {
         const expired = await tx.reservation.findMany({
-          where: { status: 'PENDING', expiresAt: { lte: graceDeadline } },
+          where: {
+            status: ReservationStatus.PENDING,
+            expiresAt: { lte: graceDeadline },
+          },
           select: { id: true },
         });
 
         if (expired.length === 0) return;
 
-        const ids = expired.map((r) => r.id);
+        for (const { id } of expired) {
+          await transitionReservation(
+            tx,
+            id,
+            ReservationStatus.PENDING,
+            ReservationStatus.REJECTED,
+            'cron',
+            { reason: 'reservation_timeout' },
+          );
+        }
 
-        await tx.reservation.updateMany({
-          where: { id: { in: ids } },
-          data: { status: 'REJECTED', rejectedAt: new Date() },
-        });
-        await tx.eventSeat.updateMany({
-          where: { reservationSeats: { some: { reservationId: { in: ids } } } },
-          data: { status: 'AVAILABLE' },
-        });
-        await tx.reservationSeat.updateMany({
-          where: { reservationId: { in: ids } },
-          data: { isActive: false },
-        });
-        await tx.auditLog.createMany({
-          data: ids.map((id) => ({
-            reservationId: id,
-            entityType: 'Reservation',
-            entityId: id,
-            action: 'STATUS_CHANGED',
-            previousStatus: 'PENDING',
-            newStatus: 'REJECTED',
-            triggeredBy: 'cron',
-            metadata: { reason: 'reservation_timeout' },
-          })),
-        });
-
-        this.logger.log(`Expired ${ids.length} reservations`);
+        this.logger.log(`Expired ${expired.length} reservations`);
       });
     } finally {
       this.isRunning = false;

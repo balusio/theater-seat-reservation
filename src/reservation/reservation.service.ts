@@ -7,6 +7,11 @@ import { ConfigService } from '@nestjs/config';
 import { SqsService } from '@ssut/nestjs-sqs';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateReservationDto } from './dto/create-reservation.dto';
+import {
+  ReservationStatus,
+  SeatStatus,
+} from '../common/constants/state-machine';
+import { transitionReservation } from '../common/helpers/transition-reservation';
 
 @Injectable()
 export class ReservationService {
@@ -28,8 +33,8 @@ export class ReservationService {
     return this.prisma.$transaction(async (tx) => {
       try {
         const locked = await tx.eventSeat.updateMany({
-          where: { id: { in: dto.seatIds }, status: 'AVAILABLE' },
-          data: { status: 'HELD' },
+          where: { id: { in: dto.seatIds }, status: SeatStatus.AVAILABLE },
+          data: { status: SeatStatus.HELD },
         });
 
         if (locked.count !== dto.seatIds.length) {
@@ -40,14 +45,19 @@ export class ReservationService {
           data: {
             idempotencyKey: dto.idempotencyKey,
             eventId: dto.eventId,
-            status: 'PENDING',
+            status: ReservationStatus.PENDING,
             expiresAt: new Date(Date.now() + this.ttlMinutes * 60 * 1000),
             reservationSeats: {
-              create: dto.seatIds.map((id) => ({ eventSeatId: id, isActive: true })),
+              create: dto.seatIds.map((id) => ({
+                eventSeatId: id,
+                isActive: true,
+              })),
             },
           },
           include: {
-            reservationSeats: { include: { eventSeat: { include: { seat: true } } } },
+            reservationSeats: {
+              include: { eventSeat: { include: { seat: true } } },
+            },
           },
         });
 
@@ -57,7 +67,7 @@ export class ReservationService {
             entityType: 'Reservation',
             entityId: reservation.id,
             action: 'CREATED',
-            newStatus: 'PENDING',
+            newStatus: ReservationStatus.PENDING,
             triggeredBy: 'api',
             metadata: { seatCount: dto.seatIds.length },
           },
@@ -87,7 +97,9 @@ export class ReservationService {
     const reservation = await this.prisma.reservation.findUnique({
       where: { id: reservationId },
       include: {
-        reservationSeats: { include: { eventSeat: { include: { seat: true } } } },
+        reservationSeats: {
+          include: { eventSeat: { include: { seat: true } } },
+        },
       },
     });
 
@@ -100,7 +112,7 @@ export class ReservationService {
       where: { id: reservationId },
     });
 
-    if (!reservation || reservation.status !== 'PENDING') {
+    if (!reservation || reservation.status !== ReservationStatus.PENDING) {
       throw new ConflictException('Reservation is not pending');
     }
 
@@ -119,7 +131,7 @@ export class ReservationService {
       const [reservation] = await tx.$queryRaw<any[]>`
         SELECT * FROM "Reservation"
         WHERE id = ${reservationId}::uuid
-        AND status = 'PENDING'
+        AND status = ${ReservationStatus.PENDING}
         FOR UPDATE
       `;
 
@@ -132,52 +144,24 @@ export class ReservationService {
       );
 
       if (new Date() > graceDeadline) {
-        await tx.reservation.update({
-          where: { id: reservationId },
-          data: { status: 'REJECTED', rejectedAt: new Date() },
-        });
-        await tx.eventSeat.updateMany({
-          where: { reservationSeats: { some: { reservationId } } },
-          data: { status: 'AVAILABLE' },
-        });
-        await tx.reservationSeat.updateMany({
-          where: { reservationId },
-          data: { isActive: false },
-        });
-        await tx.auditLog.create({
-          data: {
-            reservationId,
-            entityType: 'Reservation',
-            entityId: reservationId,
-            action: 'STATUS_CHANGED',
-            previousStatus: 'PENDING',
-            newStatus: 'REJECTED',
-            triggeredBy: 'worker',
-            metadata: { reason: 'expired_during_confirmation' },
-          },
-        });
+        await transitionReservation(
+          tx,
+          reservationId,
+          ReservationStatus.PENDING,
+          ReservationStatus.REJECTED,
+          'worker',
+          { reason: 'expired_during_confirmation' },
+        );
         throw new ConflictException('Reservation expired');
       }
 
-      await tx.reservation.update({
-        where: { id: reservationId },
-        data: { status: 'CONFIRMED', confirmedAt: new Date() },
-      });
-      await tx.eventSeat.updateMany({
-        where: { reservationSeats: { some: { reservationId } } },
-        data: { status: 'BOOKED' },
-      });
-      await tx.auditLog.create({
-        data: {
-          reservationId,
-          entityType: 'Reservation',
-          entityId: reservationId,
-          action: 'STATUS_CHANGED',
-          previousStatus: 'PENDING',
-          newStatus: 'CONFIRMED',
-          triggeredBy: 'worker',
-        },
-      });
+      await transitionReservation(
+        tx,
+        reservationId,
+        ReservationStatus.PENDING,
+        ReservationStatus.CONFIRMED,
+        'worker',
+      );
     });
   }
 
@@ -193,41 +177,30 @@ export class ReservationService {
         throw new NotFoundException('Reservation not found');
       }
 
-      const validFrom = ['PENDING', 'CONFIRMED'];
-      if (!validFrom.includes(reservation.status)) {
+      const previousStatus = reservation.status as ReservationStatus;
+
+      if (
+        previousStatus !== ReservationStatus.PENDING &&
+        previousStatus !== ReservationStatus.CONFIRMED
+      ) {
         throw new ConflictException(
-          `Cannot cancel reservation in ${reservation.status} status`,
+          `Cannot cancel reservation in ${previousStatus} status`,
         );
       }
 
-      const previousStatus = reservation.status;
+      await transitionReservation(
+        tx,
+        reservationId,
+        previousStatus,
+        ReservationStatus.CANCELLED,
+        'api',
+        { reason: reason ?? 'user_initiated' },
+        { reason },
+      );
 
-      await tx.reservation.update({
+      return this.prisma.reservation.findUnique({
         where: { id: reservationId },
-        data: { status: 'CANCELLED', cancelledAt: new Date(), cancellationReason: reason },
       });
-      await tx.eventSeat.updateMany({
-        where: { reservationSeats: { some: { reservationId } } },
-        data: { status: 'AVAILABLE' },
-      });
-      await tx.reservationSeat.updateMany({
-        where: { reservationId },
-        data: { isActive: false },
-      });
-      await tx.auditLog.create({
-        data: {
-          reservationId,
-          entityType: 'Reservation',
-          entityId: reservationId,
-          action: 'STATUS_CHANGED',
-          previousStatus,
-          newStatus: 'CANCELLED',
-          triggeredBy: 'api',
-          metadata: { reason: reason ?? 'user_initiated' },
-        },
-      });
-
-      return this.prisma.reservation.findUnique({ where: { id: reservationId } });
     });
   }
 }
