@@ -26,64 +26,70 @@ export class ReservationService {
   }
 
   async create(dto: CreateReservationDto) {
-    const existing = await this.prisma.reservation.findUnique({
-      where: { idempotencyKey: dto.idempotencyKey },
-      include: {
-        reservationSeats: {
-          include: { eventSeat: { include: { seat: true } } },
-        },
-      },
-    });
-
-    if (existing) return existing;
-
     return this.prisma.$transaction(async (tx) => {
-      const locked = await tx.eventSeat.updateMany({
-        where: {
-          id: { in: dto.seatIds },
-          eventId: dto.eventId,
-          status: SeatStatus.AVAILABLE,
-        },
-        data: { status: SeatStatus.HELD },
-      });
+      try {
+        const locked = await tx.eventSeat.updateMany({
+          where: {
+            id: { in: dto.seatIds },
+            eventId: dto.eventId,
+            status: SeatStatus.AVAILABLE,
+          },
+          data: { status: SeatStatus.HELD },
+        });
 
-      if (locked.count !== dto.seatIds.length) {
-        throw new ConflictException('One or more seats unavailable');
+        if (locked.count !== dto.seatIds.length) {
+          throw new ConflictException('One or more seats unavailable');
+        }
+
+        const reservation = await tx.reservation.create({
+          data: {
+            idempotencyKey: dto.idempotencyKey,
+            eventId: dto.eventId,
+            status: ReservationStatus.PENDING,
+            expiresAt: new Date(Date.now() + this.ttlMinutes * 60 * 1000),
+            reservationSeats: {
+              create: dto.seatIds.map((id) => ({
+                eventSeatId: id,
+                isActive: true,
+              })),
+            },
+          },
+          include: {
+            reservationSeats: {
+              include: { eventSeat: { include: { seat: true } } },
+            },
+          },
+        });
+
+        await tx.auditLog.create({
+          data: {
+            reservationId: reservation.id,
+            entityType: 'Reservation',
+            entityId: reservation.id,
+            action: 'CREATED',
+            newStatus: ReservationStatus.PENDING,
+            triggeredBy: 'api',
+            metadata: { seatCount: dto.seatIds.length },
+          },
+        });
+
+        return reservation;
+      } catch (error) {
+        if (
+          error.code === 'P2002' &&
+          error.meta?.target?.includes('idempotencyKey')
+        ) {
+          return tx.reservation.findUnique({
+            where: { idempotencyKey: dto.idempotencyKey },
+            include: {
+              reservationSeats: {
+                include: { eventSeat: { include: { seat: true } } },
+              },
+            },
+          });
+        }
+        throw error;
       }
-
-      const reservation = await tx.reservation.create({
-        data: {
-          idempotencyKey: dto.idempotencyKey,
-          eventId: dto.eventId,
-          status: ReservationStatus.PENDING,
-          expiresAt: new Date(Date.now() + this.ttlMinutes * 60 * 1000),
-          reservationSeats: {
-            create: dto.seatIds.map((id) => ({
-              eventSeatId: id,
-              isActive: true,
-            })),
-          },
-        },
-        include: {
-          reservationSeats: {
-            include: { eventSeat: { include: { seat: true } } },
-          },
-        },
-      });
-
-      await tx.auditLog.create({
-        data: {
-          reservationId: reservation.id,
-          entityType: 'Reservation',
-          entityId: reservation.id,
-          action: 'CREATED',
-          newStatus: ReservationStatus.PENDING,
-          triggeredBy: 'api',
-          metadata: { seatCount: dto.seatIds.length },
-        },
-      });
-
-      return reservation;
     });
   }
 

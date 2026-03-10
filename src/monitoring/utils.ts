@@ -17,8 +17,14 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     .cards { display: flex; flex-wrap: wrap; gap: 16px; }
     .card { background: #1a1f2e; border: 1px solid #1e2535; border-radius: 10px; padding: 20px; min-width: 220px; flex: 1; }
     .card h2 { font-size: 12px; font-weight: 500; color: #64748b; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 16px; }
-    .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid #1e2535; }
-    .stat-row:last-child { border-bottom: none; }
+    .card h3 { font-size: 13px; font-weight: 600; color: #e2e8f0; margin-bottom: 10px; }
+    .card h3 .event-status { font-size: 10px; font-weight: 500; padding: 2px 6px; border-radius: 3px; margin-left: 8px; }
+    .card h3 .event-status.OPEN { background: #1a3a2a; color: #4ade80; }
+    .card h3 .event-status.SCHEDULED { background: #1e3a5f; color: #60a5fa; }
+    .card h3 .event-status.CLOSED { background: #3a1a1a; color: #f87171; }
+    .event-block { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #1e2535; }
+    .event-block:last-child { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+    .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
     .stat-label { color: #94a3b8; }
     .stat-value { font-weight: 600; font-size: 16px; }
     .total { color: #e2e8f0; }
@@ -29,6 +35,8 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     .available { color: #22c55e; }
     .held { color: #f59e0b; }
     .booked { color: #3b82f6; }
+    .seat-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 8px; background: #0f1117; }
+    .seat-bar-seg { height: 100%; transition: width .4s; }
     .mem-bar { background: #0f1117; border-radius: 4px; height: 6px; margin-top: 6px; overflow: hidden; }
     .mem-bar-fill { height: 100%; background: #3b82f6; border-radius: 4px; transition: width .4s; }
     section h2 { font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 12px; }
@@ -59,8 +67,8 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         <h2>Reservations</h2>
         <div class="empty">Loading…</div>
       </div>
-      <div class="card" id="card-seats">
-        <h2>Seats</h2>
+      <div class="card" id="card-events">
+        <h2>Seats by Event</h2>
         <div class="empty">Loading…</div>
       </div>
       <div class="card" id="card-memory">
@@ -86,10 +94,10 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
   </main>
   <script>
     function mb(bytes) { return (bytes / 1024 / 1024).toFixed(1) + ' MB'; }
-    function pct(used, total) { return Math.round((used / total) * 100); }
+    function pct(a, b) { return b ? Math.round((a / b) * 100) : 0; }
     function shortId(id) { return id ? id.slice(0, 8) + '…' : '—'; }
     function timeAgo(iso) {
-      const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+      var s = Math.floor((Date.now() - new Date(iso)) / 1000);
       if (s < 60) return s + 's ago';
       if (s < 3600) return Math.floor(s / 60) + 'm ago';
       return Math.floor(s / 3600) + 'h ago';
@@ -104,14 +112,29 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
         + '<div class="stat-row"><span class="stat-label">Rejected</span><span class="stat-value rejected">' + r.rejected + '</span></div>'
         + '<div class="stat-row"><span class="stat-label">Total</span><span class="stat-value total">' + r.total + '</span></div>';
     }
-    function renderSeats(s) {
-      return '<div class="stat-row"><span class="stat-label">Available</span><span class="stat-value available">' + s.available + '</span></div>'
-        + '<div class="stat-row"><span class="stat-label">Held</span><span class="stat-value held">' + s.held + '</span></div>'
-        + '<div class="stat-row"><span class="stat-label">Booked</span><span class="stat-value booked">' + s.booked + '</span></div>'
-        + '<div class="stat-row"><span class="stat-label">Total</span><span class="stat-value total">' + s.total + '</span></div>';
+    function renderEvents(events) {
+      if (!events || !events.length) return '<div class="empty">No events with seats</div>';
+      return events.map(function(e) {
+        var bar = '';
+        if (e.total > 0) {
+          bar = '<div class="seat-bar">'
+            + '<div class="seat-bar-seg" style="width:' + pct(e.available, e.total) + '%;background:#22c55e"></div>'
+            + '<div class="seat-bar-seg" style="width:' + pct(e.held, e.total) + '%;background:#f59e0b"></div>'
+            + '<div class="seat-bar-seg" style="width:' + pct(e.booked, e.total) + '%;background:#3b82f6"></div>'
+            + '</div>';
+        }
+        return '<div class="event-block">'
+          + '<h3>' + e.title + '<span class="event-status ' + e.eventStatus + '">' + e.eventStatus + '</span></h3>'
+          + '<div class="stat-row"><span class="stat-label">Available</span><span class="stat-value available">' + e.available + '</span></div>'
+          + '<div class="stat-row"><span class="stat-label">Held</span><span class="stat-value held">' + e.held + '</span></div>'
+          + '<div class="stat-row"><span class="stat-label">Booked</span><span class="stat-value booked">' + e.booked + '</span></div>'
+          + '<div class="stat-row"><span class="stat-label">Total</span><span class="stat-value total">' + e.total + '</span></div>'
+          + bar
+          + '</div>';
+      }).join('');
     }
     function renderMemory(m) {
-      const p = pct(m.heapUsed, m.heapTotal);
+      var p = pct(m.heapUsed, m.heapTotal);
       return '<div class="stat-row"><span class="stat-label">RSS</span><span class="stat-value total">' + mb(m.rss) + '</span></div>'
         + '<div class="stat-row"><span class="stat-label">Heap used</span><span class="stat-value total">' + mb(m.heapUsed) + '</span></div>'
         + '<div class="stat-row"><span class="stat-label">Heap total</span><span class="stat-value total">' + mb(m.heapTotal) + '</span></div>'
@@ -120,7 +143,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
     function renderActivity(rows) {
       if (!rows.length) return '<tr><td colspan="5" class="empty">No activity yet</td></tr>';
       return rows.map(function(a) {
-        const transition = a.previousStatus
+        var transition = a.previousStatus
           ? '<span style="color:#64748b">' + a.previousStatus + '</span> → ' + (a.newStatus || '—')
           : (a.newStatus || '—');
         return '<tr>'
@@ -139,7 +162,7 @@ export const DASHBOARD_HTML = `<!DOCTYPE html>
           document.getElementById('dot').className = 'dot up';
           document.getElementById('last-updated').textContent = 'Updated ' + timeAgo(data.timestamp);
           document.getElementById('card-reservations').innerHTML = '<h2>Reservations</h2>' + renderReservations(data.reservations);
-          document.getElementById('card-seats').innerHTML = '<h2>Seats</h2>' + renderSeats(data.seats);
+          document.getElementById('card-events').innerHTML = '<h2>Seats by Event</h2>' + renderEvents(data.events);
           document.getElementById('card-memory').innerHTML = '<h2>Memory</h2>' + renderMemory(data.memory);
           document.getElementById('activity-body').innerHTML = renderActivity(data.recentActivity);
         })

@@ -26,7 +26,7 @@ describe('MonitoringController', () => {
         uptime: 100,
         memory: { rss: 100, heapUsed: 50, heapTotal: 80 },
         reservations: { pending: 1, confirmed: 2, cancelled: 0, rejected: 0, total: 3 },
-        seats: { available: 100, held: 1, booked: 2, total: 103 },
+        events: [{ eventId: 'e-1', title: 'Hamlet', eventStatus: 'OPEN', available: 100, held: 1, booked: 2, total: 103 }],
         recentActivity: [],
       };
       service.getStats.mockResolvedValue(stats);

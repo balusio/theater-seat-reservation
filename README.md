@@ -261,7 +261,7 @@ The `AuditLog` table is the single source of truth. Every state transition write
 
 - **Prisma transactions have a performance cost.** Every write runs inside a transaction. For theater scale (hundreds of seats), this is not a bottleneck. For Ticketmaster scale, add PgBouncer for connection pooling.
 
-- **If the system goes down and the cron couldn't run**, SQS preserves the confirmation messages. When the system recovers, the grace period ensures confirmations process before the cron expires them. This is the primary advantage over an in-process queue like BullMQ.
+- **If the system goes down and the cron couldn't run**, SQS preserves the confirmation messages. When the system recovers, confirmations in the queue are processed before the cron runs its next sweep. This is the primary advantage over an in-process queue like BullMQ.
 
 - **SQS does not provide a built-in dashboard** like bull-board. Monitoring is handled through our custom HTML dashboard + audit_log. For production, AWS CloudWatch provides SQS metrics natively.
 
