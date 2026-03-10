@@ -73,7 +73,6 @@ describe('ReservationService', () => {
             get: jest.fn((key: string) => {
               const map: Record<string, string> = {
                 RESERVATION_TTL_MINUTES: '5',
-                RESERVATION_GRACE_PERIOD_MINUTES: '2',
               };
               return map[key];
             }),
@@ -89,7 +88,6 @@ describe('ReservationService', () => {
 
   describe('create', () => {
     it('should create a PENDING reservation when seats are available', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
@@ -126,7 +124,6 @@ describe('ReservationService', () => {
     });
 
     it('should throw ConflictException when not all seats are available', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 1 }); // only 1 of 2
 
       await expect(
@@ -136,10 +133,19 @@ describe('ReservationService', () => {
           seatIds: SEAT_IDS,
         }),
       ).rejects.toThrow(ConflictException);
+
+      expect(tx.reservation.create).not.toHaveBeenCalled();
     });
 
-    it('should return existing reservation on duplicate idempotencyKey', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(mockReservation);
+    it('should return existing reservation on duplicate idempotencyKey (P2002)', async () => {
+      tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
+
+      const p2002Error = Object.assign(new Error('Unique constraint'), {
+        code: 'P2002',
+        meta: { target: ['idempotencyKey'] },
+      });
+      tx.reservation.create.mockRejectedValue(p2002Error);
+      tx.reservation.findUnique.mockResolvedValue(mockReservation);
 
       const result = await service.create({
         idempotencyKey: IDEMPOTENCY_KEY,
@@ -148,11 +154,37 @@ describe('ReservationService', () => {
       });
 
       expect(result).toEqual(mockReservation);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.reservation.findUnique).toHaveBeenCalledWith({
+        where: { idempotencyKey: IDEMPOTENCY_KEY },
+        include: {
+          reservationSeats: {
+            include: { eventSeat: { include: { seat: true } } },
+          },
+        },
+      });
     });
 
-    it('should rethrow errors from transaction', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
+    it('should rethrow P2002 errors not related to idempotencyKey', async () => {
+      tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
+
+      const p2002Error = Object.assign(new Error('Unique constraint'), {
+        code: 'P2002',
+        meta: { target: ['eventSeatId_isActive'] },
+      });
+      tx.reservation.create.mockRejectedValue(p2002Error);
+
+      await expect(
+        service.create({
+          idempotencyKey: IDEMPOTENCY_KEY,
+          eventId: EVENT_ID,
+          seatIds: SEAT_IDS,
+        }),
+      ).rejects.toThrow('Unique constraint');
+
+      expect(tx.reservation.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should rethrow non-Prisma errors from transaction', async () => {
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockRejectedValue(new Error('DB down'));
 
@@ -166,7 +198,6 @@ describe('ReservationService', () => {
     });
 
     it('should set expiresAt based on TTL config', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
@@ -254,13 +285,9 @@ describe('ReservationService', () => {
   // ─── CONFIRM ──────────────────────────────────────────────
 
   describe('confirm', () => {
-    it('should confirm a PENDING reservation within grace period', async () => {
+    it('should confirm a PENDING reservation', async () => {
       tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() + 60_000), // future
-        },
+        { id: RESERVATION_ID, status: 'PENDING' },
       ]);
       tx.reservation.update.mockResolvedValue({});
       tx.eventSeat.updateMany.mockResolvedValue({});
@@ -290,65 +317,6 @@ describe('ReservationService', () => {
           }),
         }),
       );
-    });
-
-    it('should confirm even if expiresAt is past but within grace period', async () => {
-      // expiresAt 1 min ago, grace = 2 min → still valid
-      tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() - 60_000),
-        },
-      ]);
-      tx.reservation.update.mockResolvedValue({});
-      tx.eventSeat.updateMany.mockResolvedValue({});
-      tx.auditLog.create.mockResolvedValue({});
-
-      await service.confirm(RESERVATION_ID);
-
-      expect(tx.reservation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'CONFIRMED' }),
-        }),
-      );
-    });
-
-    it('should reject and throw if expired past grace period', async () => {
-      // expiresAt 5 min ago, grace = 2 min → expired
-      tx.$queryRaw.mockResolvedValue([
-        {
-          id: RESERVATION_ID,
-          status: 'PENDING',
-          expiresAt: new Date(Date.now() - 5 * 60 * 1000),
-        },
-      ]);
-      tx.reservation.update.mockResolvedValue({});
-      tx.eventSeat.updateMany.mockResolvedValue({});
-      tx.reservationSeat.updateMany.mockResolvedValue({});
-      tx.auditLog.create.mockResolvedValue({});
-
-      await expect(service.confirm(RESERVATION_ID)).rejects.toThrow(
-        ConflictException,
-      );
-
-      // Should have set REJECTED
-      expect(tx.reservation.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ status: 'REJECTED' }),
-        }),
-      );
-      // Seats released
-      expect(tx.eventSeat.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { status: 'AVAILABLE' },
-        }),
-      );
-      // ReservationSeats deactivated
-      expect(tx.reservationSeat.updateMany).toHaveBeenCalledWith({
-        where: { reservationId: RESERVATION_ID },
-        data: { isActive: false },
-      });
     });
 
     it('should throw ConflictException if reservation not found or not PENDING', async () => {

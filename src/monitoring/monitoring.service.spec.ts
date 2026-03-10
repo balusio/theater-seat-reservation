@@ -6,6 +6,8 @@ describe('MonitoringService', () => {
   let service: MonitoringService;
   let prisma: jest.Mocked<any>;
 
+  const EVENT_ID = 'event-uuid-1';
+
   beforeEach(async () => {
     prisma = {
       reservation: {
@@ -13,6 +15,9 @@ describe('MonitoringService', () => {
       },
       eventSeat: {
         groupBy: jest.fn(),
+      },
+      event: {
+        findMany: jest.fn(),
       },
       auditLog: {
         findMany: jest.fn(),
@@ -29,7 +34,7 @@ describe('MonitoringService', () => {
     service = module.get(MonitoringService);
   });
 
-  it('should aggregate reservation and seat stats correctly', async () => {
+  it('should aggregate reservation stats and seats per event', async () => {
     prisma.reservation.groupBy.mockResolvedValue([
       { status: 'PENDING', _count: { status: 3 } },
       { status: 'CONFIRMED', _count: { status: 5 } },
@@ -37,9 +42,12 @@ describe('MonitoringService', () => {
       { status: 'REJECTED', _count: { status: 2 } },
     ]);
     prisma.eventSeat.groupBy.mockResolvedValue([
-      { status: 'AVAILABLE', _count: { status: 100 } },
-      { status: 'HELD', _count: { status: 3 } },
-      { status: 'BOOKED', _count: { status: 5 } },
+      { eventId: EVENT_ID, status: 'AVAILABLE', _count: { status: 100 } },
+      { eventId: EVENT_ID, status: 'HELD', _count: { status: 3 } },
+      { eventId: EVENT_ID, status: 'BOOKED', _count: { status: 5 } },
+    ]);
+    prisma.event.findMany.mockResolvedValue([
+      { id: EVENT_ID, title: 'Hamlet', status: 'OPEN' },
     ]);
     prisma.auditLog.findMany.mockResolvedValue([
       {
@@ -62,7 +70,11 @@ describe('MonitoringService', () => {
       rejected: 2,
       total: 11,
     });
-    expect(stats.seats).toEqual({
+    expect(stats.events).toHaveLength(1);
+    expect(stats.events[0]).toEqual({
+      eventId: EVENT_ID,
+      title: 'Hamlet',
+      eventStatus: 'OPEN',
       available: 100,
       held: 3,
       booked: 5,
@@ -79,6 +91,7 @@ describe('MonitoringService', () => {
   it('should handle empty database gracefully', async () => {
     prisma.reservation.groupBy.mockResolvedValue([]);
     prisma.eventSeat.groupBy.mockResolvedValue([]);
+    prisma.event.findMany.mockResolvedValue([]);
     prisma.auditLog.findMany.mockResolvedValue([]);
 
     const stats = await service.getStats();
@@ -90,12 +103,31 @@ describe('MonitoringService', () => {
       rejected: 0,
       total: 0,
     });
-    expect(stats.seats).toEqual({
-      available: 0,
-      held: 0,
-      booked: 0,
-      total: 0,
-    });
+    expect(stats.events).toEqual([]);
     expect(stats.recentActivity).toEqual([]);
+  });
+
+  it('should show multiple events separately', async () => {
+    prisma.reservation.groupBy.mockResolvedValue([]);
+    prisma.eventSeat.groupBy.mockResolvedValue([
+      { eventId: 'event-1', status: 'AVAILABLE', _count: { status: 80 } },
+      { eventId: 'event-1', status: 'HELD', _count: { status: 10 } },
+      { eventId: 'event-2', status: 'AVAILABLE', _count: { status: 170 } },
+    ]);
+    prisma.event.findMany.mockResolvedValue([
+      { id: 'event-1', title: 'Hamlet', status: 'OPEN' },
+      { id: 'event-2', title: 'Swan Lake', status: 'SCHEDULED' },
+    ]);
+    prisma.auditLog.findMany.mockResolvedValue([]);
+
+    const stats = await service.getStats();
+
+    expect(stats.events).toHaveLength(2);
+    expect(stats.events[0]).toEqual(
+      expect.objectContaining({ title: 'Hamlet', available: 80, held: 10, total: 90 }),
+    );
+    expect(stats.events[1]).toEqual(
+      expect.objectContaining({ title: 'Swan Lake', available: 170, held: 0, total: 170 }),
+    );
   });
 });

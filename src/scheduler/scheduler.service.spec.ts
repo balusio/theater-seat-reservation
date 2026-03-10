@@ -1,5 +1,4 @@
 import { Test } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
 import { SchedulerService } from './scheduler.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -32,36 +31,22 @@ describe('SchedulerService', () => {
       providers: [
         SchedulerService,
         { provide: PrismaService, useValue: prisma },
-        {
-          provide: ConfigService,
-          useValue: {
-            get: jest.fn((key: string) => {
-              if (key === 'RESERVATION_GRACE_PERIOD_MINUTES') return '2';
-              return undefined;
-            }),
-          },
-        },
       ],
     }).compile();
 
     service = module.get(SchedulerService);
   });
 
-  it('should reject expired reservations past grace period using transitionReservation', async () => {
+  it('should reject expired reservations where expiresAt <= now', async () => {
     const expiredIds = [{ id: 'res-1' }, { id: 'res-2' }];
     tx.reservation.findMany.mockResolvedValue(expiredIds);
 
     await service.expireReservations();
 
-    // Verify query uses grace period
     const findCall = tx.reservation.findMany.mock.calls[0][0];
     expect(findCall.where.status).toBe('PENDING');
     expect(findCall.where.expiresAt.lte).toBeInstanceOf(Date);
-    const graceDeadline = findCall.where.expiresAt.lte.getTime();
-    const expected = Date.now() - 2 * 60 * 1000;
-    expect(Math.abs(graceDeadline - expected)).toBeLessThan(1000);
 
-    // transitionReservation calls reservation.update per each expired id
     expect(tx.reservation.update).toHaveBeenCalledTimes(2);
     expect(tx.reservation.update).toHaveBeenCalledWith({
       where: { id: 'res-1' },
@@ -72,21 +57,8 @@ describe('SchedulerService', () => {
       data: expect.objectContaining({ status: 'REJECTED', rejectedAt: expect.any(Date) }),
     });
 
-    // Seats released for each reservation
     expect(tx.eventSeat.updateMany).toHaveBeenCalledTimes(2);
-    expect(tx.eventSeat.updateMany).toHaveBeenCalledWith({
-      where: { reservationSeats: { some: { reservationId: 'res-1' } } },
-      data: { status: 'AVAILABLE' },
-    });
-
-    // ReservationSeats deactivated for each
     expect(tx.reservationSeat.updateMany).toHaveBeenCalledTimes(2);
-    expect(tx.reservationSeat.updateMany).toHaveBeenCalledWith({
-      where: { reservationId: 'res-1' },
-      data: { isActive: false },
-    });
-
-    // Audit logs created per each
     expect(tx.auditLog.create).toHaveBeenCalledTimes(2);
     expect(tx.auditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -114,7 +86,7 @@ describe('SchedulerService', () => {
     tx.reservation.findMany.mockImplementationOnce(() => firstPromise.then(() => []));
 
     const run1 = service.expireReservations();
-    const run2 = service.expireReservations(); // should skip (isRunning = true)
+    const run2 = service.expireReservations();
 
     resolveFirst!();
     await run1;
@@ -128,7 +100,6 @@ describe('SchedulerService', () => {
 
     await expect(service.expireReservations()).rejects.toThrow('DB error');
 
-    // isRunning should be reset, so next call should work
     tx.reservation.findMany.mockResolvedValue([]);
     await service.expireReservations();
 

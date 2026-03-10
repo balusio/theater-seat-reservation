@@ -1,6 +1,5 @@
 #!/bin/bash
 # Test: Parallel reservations for DIFFERENT seats — all should succeed
-# Simulates multiple users buying different seats concurrently
 source "$(dirname "$0")/config.sh"
 
 echo "========================================="
@@ -8,7 +7,7 @@ echo " 07 — Parallel Reservations (Different Seats)"
 echo "========================================="
 
 NUM_PARALLEL="${1:-10}"
-SEAT_START="${2:-40}"
+SEAT_OFFSET=40
 
 info "Running $NUM_PARALLEL parallel reservations for DIFFERENT seats..."
 echo ""
@@ -18,14 +17,14 @@ PIDS=()
 
 for i in $(seq 1 "$NUM_PARALLEL"); do
   KEY=$(uuidgen | tr '[:upper:]' '[:lower:]')
-  SEAT_ID=$((SEAT_START + i))
+  SEAT=$(seat_id $((SEAT_OFFSET + i)))
   (
     result=$(curl -s -w "\n%{http_code}" -X POST \
       -H "Content-Type: application/json" \
       -d "{
         \"idempotencyKey\": \"$KEY\",
-        \"eventId\": $EVENT_ID,
-        \"seatIds\": [$SEAT_ID]
+        \"eventId\": \"$EVENT_ID\",
+        \"seatIds\": [\"$SEAT\"]
       }" \
       "${BASE_URL}/reservations")
 
@@ -53,7 +52,7 @@ for i in $(seq 1 "$NUM_PARALLEL"); do
     WINS=$((WINS + 1))
     RES_ID=$(echo "$body" | jq -r '.id' 2>/dev/null)
     RES_IDS+=("$RES_ID")
-    echo -e "  Request $i: ${GREEN}201 — Seat $((SEAT_START + i))${NC}"
+    echo -e "  Request $i: ${GREEN}201 — Seat $((SEAT_OFFSET + i))${NC}"
   else
     FAILS=$((FAILS + 1))
     echo -e "  Request $i: ${RED}$status${NC}: $body"

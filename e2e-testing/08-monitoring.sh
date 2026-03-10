@@ -6,7 +6,6 @@ echo "========================================="
 echo " 08 — Monitoring & Audit Trail"
 echo "========================================="
 
-# 1. Get monitoring stats
 info "Fetching monitoring stats..."
 response=$(request GET /monitoring/stats)
 assert_status "$response" 200 "Monitoring stats"
@@ -22,11 +21,8 @@ echo "    Rejected:  $(echo "$body" | jq '.reservations.rejected')"
 echo "    Total:     $(echo "$body" | jq '.reservations.total')"
 
 echo ""
-echo "  Seats:"
-echo "    Available: $(echo "$body" | jq '.seats.available')"
-echo "    Held:      $(echo "$body" | jq '.seats.held')"
-echo "    Booked:    $(echo "$body" | jq '.seats.booked')"
-echo "    Total:     $(echo "$body" | jq '.seats.total')"
+echo "  Events:"
+echo "$body" | jq -r '.events[] | "    \(.title) [\(.eventStatus)] — Available: \(.available), Held: \(.held), Booked: \(.booked), Total: \(.total)"'
 
 echo ""
 echo "  System:"

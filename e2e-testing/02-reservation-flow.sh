@@ -7,6 +7,11 @@ echo " 02 — Reservation Full Lifecycle"
 echo "========================================="
 
 IDEMP_KEY=$(uuidgen | tr '[:upper:]' '[:lower:]')
+SEAT_A=$(seat_id 0)
+SEAT_B=$(seat_id 1)
+SEAT_C=$(seat_id 2)
+
+info "Using seats: $SEAT_A, $SEAT_B, $SEAT_C"
 
 # --------------------------------------------------
 # A) Create reservation
@@ -14,8 +19,8 @@ IDEMP_KEY=$(uuidgen | tr '[:upper:]' '[:lower:]')
 info "Creating reservation (idempotencyKey: $IDEMP_KEY)..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$IDEMP_KEY\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [1, 2, 3]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT_A\", \"$SEAT_B\", \"$SEAT_C\"]
 }")
 assert_status "$response" 201 "Create reservation"
 
@@ -30,8 +35,8 @@ info "Expires: $(json_field "$response" '.expiresAt')"
 info "Repeating same request (idempotency check)..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$IDEMP_KEY\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [1, 2, 3]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT_A\", \"$SEAT_B\", \"$SEAT_C\"]
 }")
 assert_status "$response" 201 "Idempotent create"
 
@@ -59,11 +64,9 @@ response=$(request POST "/reservations/$RESERVATION_ID/confirm" "{
 }")
 assert_status "$response" 202 "Enqueue confirmation"
 
-# Wait for SQS consumer to process
 info "Waiting 3s for SQS consumer..."
 sleep 3
 
-# Check status
 response=$(request GET "/reservations/$RESERVATION_ID")
 STATUS=$(json_field "$response" '.status')
 if [ "$STATUS" = "CONFIRMED" ]; then
@@ -79,9 +82,8 @@ info "Cancelling confirmed reservation..."
 response=$(request POST "/reservations/$RESERVATION_ID/cancel" '{
   "reason": "e2e test cancellation"
 }')
-assert_status "$response" 200 "Cancel confirmed reservation"
+assert_status "$response" 201 "Cancel confirmed reservation"
 
-# Verify final status
 response=$(request GET "/reservations/$RESERVATION_ID")
 STATUS=$(json_field "$response" '.status')
 if [ "$STATUS" = "CANCELLED" ]; then

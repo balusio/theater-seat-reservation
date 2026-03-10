@@ -7,14 +7,16 @@ echo " 04 — Cancel Pending Reservation"
 echo "========================================="
 
 KEY=$(uuidgen | tr '[:upper:]' '[:lower:]')
-SEAT=20
+SEAT=$(seat_id 20)
+
+info "Using seat: $SEAT"
 
 # Create
 info "Creating reservation..."
 response=$(request POST /reservations "{
   \"idempotencyKey\": \"$KEY\",
-  \"eventId\": $EVENT_ID,
-  \"seatIds\": [$SEAT]
+  \"eventId\": \"$EVENT_ID\",
+  \"seatIds\": [\"$SEAT\"]
 }")
 assert_status "$response" 201 "Create reservation"
 RES_ID=$(json_field "$response" '.id')
@@ -22,7 +24,7 @@ RES_ID=$(json_field "$response" '.id')
 # Cancel directly from PENDING
 info "Cancelling from PENDING..."
 response=$(request POST "/reservations/$RES_ID/cancel" '{"reason":"changed my mind"}')
-assert_status "$response" 200 "Cancel pending"
+assert_status "$response" 201 "Cancel pending"
 
 # Verify
 response=$(request GET "/reservations/$RES_ID")
