@@ -88,7 +88,6 @@ describe('ReservationService', () => {
 
   describe('create', () => {
     it('should create a PENDING reservation when seats are available', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
@@ -125,7 +124,6 @@ describe('ReservationService', () => {
     });
 
     it('should throw ConflictException when not all seats are available', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 1 }); // only 1 of 2
 
       await expect(
@@ -135,10 +133,19 @@ describe('ReservationService', () => {
           seatIds: SEAT_IDS,
         }),
       ).rejects.toThrow(ConflictException);
+
+      expect(tx.reservation.create).not.toHaveBeenCalled();
     });
 
-    it('should return existing reservation on duplicate idempotencyKey', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(mockReservation);
+    it('should return existing reservation on duplicate idempotencyKey (P2002)', async () => {
+      tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
+
+      const p2002Error = Object.assign(new Error('Unique constraint'), {
+        code: 'P2002',
+        meta: { target: ['idempotencyKey'] },
+      });
+      tx.reservation.create.mockRejectedValue(p2002Error);
+      tx.reservation.findUnique.mockResolvedValue(mockReservation);
 
       const result = await service.create({
         idempotencyKey: IDEMPOTENCY_KEY,
@@ -147,11 +154,37 @@ describe('ReservationService', () => {
       });
 
       expect(result).toEqual(mockReservation);
-      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.reservation.findUnique).toHaveBeenCalledWith({
+        where: { idempotencyKey: IDEMPOTENCY_KEY },
+        include: {
+          reservationSeats: {
+            include: { eventSeat: { include: { seat: true } } },
+          },
+        },
+      });
     });
 
-    it('should rethrow errors from transaction', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
+    it('should rethrow P2002 errors not related to idempotencyKey', async () => {
+      tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
+
+      const p2002Error = Object.assign(new Error('Unique constraint'), {
+        code: 'P2002',
+        meta: { target: ['eventSeatId_isActive'] },
+      });
+      tx.reservation.create.mockRejectedValue(p2002Error);
+
+      await expect(
+        service.create({
+          idempotencyKey: IDEMPOTENCY_KEY,
+          eventId: EVENT_ID,
+          seatIds: SEAT_IDS,
+        }),
+      ).rejects.toThrow('Unique constraint');
+
+      expect(tx.reservation.findUnique).not.toHaveBeenCalled();
+    });
+
+    it('should rethrow non-Prisma errors from transaction', async () => {
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockRejectedValue(new Error('DB down'));
 
@@ -165,7 +198,6 @@ describe('ReservationService', () => {
     });
 
     it('should set expiresAt based on TTL config', async () => {
-      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
