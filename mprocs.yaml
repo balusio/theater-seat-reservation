@@ -1,0 +1,107 @@
+# =============================================================================
+# USO:
+# =============================================================================
+#
+# PRIMERA VEZ:
+#   1. ./dev.sh (inicia mprocs)
+#   2. 'infra' y 'api' se auto-inician
+#   3. Ejecutar 'setup-sqs' manualmente con 's' (crea colas SQS)
+#   4. Ejecutar 'prisma-generate' con 's'
+#   5. Ejecutar 'prisma-migrate' con 's'
+#
+# DIA A DIA:
+#   1. ./dev.sh → infra + api arrancan automaticamente
+#   2. Iniciar 'studio' con 's' si necesitas ver la DB
+#
+# PUERTOS:
+#   PostgreSQL:    5432
+#   LocalStack:    4566
+#   NestJS API:    3000
+#   Prisma Studio: 5555
+# =============================================================================
+
+
+procs:
+  # ═══════════════════════════════════════════════════════════════════════════
+  # INFRAESTRUCTURA - PostgreSQL + LocalStack (SQS)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  infra:
+    shell: docker compose up
+    stop: SIGINT
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SETUP - Ejecutar manualmente con 's' despues de que infra este listo
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  setup-sqs:
+    shell: |
+      echo "Esperando LocalStack..." && \
+      sleep 3 && \
+      echo "Creando colas SQS..." && \
+      docker compose exec -T localstack awslocal sqs create-queue --queue-name reservation-confirm-dlq 2>/dev/null || true && \
+      docker compose exec -T localstack awslocal sqs create-queue --queue-name reservation-confirm \
+        --attributes '{"RedrivePolicy":"{\"deadLetterTargetArn\":\"arn:aws:sqs:us-east-1:000000000000:reservation-confirm-dlq\",\"maxReceiveCount\":\"3\"}","VisibilityTimeout":"30"}' 2>/dev/null || true && \
+      echo "" && \
+      echo "Colas SQS:" && \
+      docker compose exec -T localstack awslocal sqs list-queues --query 'QueueUrls' --output table && \
+      echo "" && \
+      echo "Setup completado!"
+    autostart: false
+
+  prisma-generate:
+    shell: |
+      echo "Generando cliente Prisma..." && \
+      pnpm dlx prisma generate && \
+      echo "Cliente Prisma generado!"
+    autostart: false
+
+  prisma-migrate:
+    shell: |
+      echo "Esperando PostgreSQL..." && \
+      sleep 3 && \
+      echo "Ejecutando migraciones..." && \
+      pnpm dlx prisma migrate dev && \
+      echo "Migraciones completadas!"
+    autostart: false
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # API - NestJS (puerto 3000)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  api:
+    shell: |
+      echo "Esperando PostgreSQL y LocalStack..." && \
+      until docker compose exec -T postgres pg_isready -U reservation_user > /dev/null 2>&1; do sleep 2; done && \
+      echo "PostgreSQL listo!" && \
+      until curl -sf http://localhost:4566/_localstack/health > /dev/null 2>&1; do sleep 2; done && \
+      echo "LocalStack listo!" && \
+      pnpm run start:dev
+    stop: SIGINT
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # PRISMA STUDIO - UI para la base de datos
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  studio:
+    shell: |
+      echo "Esperando PostgreSQL..." && \
+      until docker compose exec -T postgres pg_isready -U reservation_user > /dev/null 2>&1; do sleep 2; done && \
+      echo "PostgreSQL listo!" && \
+      pnpm dlx prisma studio
+    autostart: false
+    stop: SIGINT
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # TESTING - Health checks
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  test-health:
+    shell: |
+      echo "Testing health endpoint..." && \
+      curl -s http://localhost:3000/health | python3 -m json.tool && \
+      echo "" && \
+      echo "Test completado!"
+    autostart: false
+
+
