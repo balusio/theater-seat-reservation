@@ -9,7 +9,7 @@ CREATE TYPE "ReservationStatus" AS ENUM ('PENDING', 'CONFIRMED', 'CANCELLED', 'R
 
 -- CreateTable
 CREATE TABLE "Theater" (
-    "id" SERIAL NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
     "address" TEXT,
     "totalCapacity" INTEGER NOT NULL,
@@ -20,8 +20,8 @@ CREATE TABLE "Theater" (
 
 -- CreateTable
 CREATE TABLE "Section" (
-    "id" SERIAL NOT NULL,
-    "theaterId" INTEGER NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "theaterId" UUID NOT NULL,
     "name" TEXT NOT NULL,
     "rows" INTEGER NOT NULL,
     "seatsPerRow" INTEGER NOT NULL,
@@ -31,8 +31,8 @@ CREATE TABLE "Section" (
 
 -- CreateTable
 CREATE TABLE "Seat" (
-    "id" SERIAL NOT NULL,
-    "sectionId" INTEGER NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "sectionId" UUID NOT NULL,
     "row" TEXT NOT NULL,
     "number" INTEGER NOT NULL,
     "label" TEXT,
@@ -42,8 +42,8 @@ CREATE TABLE "Seat" (
 
 -- CreateTable
 CREATE TABLE "Event" (
-    "id" SERIAL NOT NULL,
-    "theaterId" INTEGER NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "theaterId" UUID NOT NULL,
     "title" TEXT NOT NULL,
     "startsAt" TIMESTAMP(3) NOT NULL,
     "endsAt" TIMESTAMP(3),
@@ -55,9 +55,9 @@ CREATE TABLE "Event" (
 
 -- CreateTable
 CREATE TABLE "EventSeat" (
-    "id" SERIAL NOT NULL,
-    "eventId" INTEGER NOT NULL,
-    "seatId" INTEGER NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "eventId" UUID NOT NULL,
+    "seatId" UUID NOT NULL,
     "status" "SeatStatus" NOT NULL DEFAULT 'AVAILABLE',
     "price" DECIMAL(10,2) NOT NULL,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -67,9 +67,9 @@ CREATE TABLE "EventSeat" (
 
 -- CreateTable
 CREATE TABLE "Reservation" (
-    "id" TEXT NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "idempotencyKey" TEXT,
-    "eventId" INTEGER NOT NULL,
+    "eventId" UUID NOT NULL,
     "status" "ReservationStatus" NOT NULL DEFAULT 'PENDING',
     "expiresAt" TIMESTAMP(3),
     "confirmedAt" TIMESTAMP(3),
@@ -86,9 +86,9 @@ CREATE TABLE "Reservation" (
 
 -- CreateTable
 CREATE TABLE "ReservationSeat" (
-    "id" SERIAL NOT NULL,
-    "reservationId" TEXT NOT NULL,
-    "eventSeatId" INTEGER NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "reservationId" UUID NOT NULL,
+    "eventSeatId" UUID NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
 
     CONSTRAINT "ReservationSeat_pkey" PRIMARY KEY ("id")
@@ -96,13 +96,13 @@ CREATE TABLE "ReservationSeat" (
 
 -- CreateTable
 CREATE TABLE "AuditLog" (
-    "id" SERIAL NOT NULL,
-    "reservationId" TEXT,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "reservationId" UUID,
     "entityType" TEXT NOT NULL,
-    "entityId" TEXT NOT NULL,
+    "entityId" UUID NOT NULL,
     "action" TEXT NOT NULL,
     "previousStatus" TEXT,
-    "newStatus" TEXT NOT NULL,
+    "newStatus" TEXT,
     "triggeredBy" TEXT NOT NULL,
     "metadata" JSONB,
     "timestamp" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -138,10 +138,13 @@ CREATE INDEX "Reservation_status_expiresAt_idx" ON "Reservation"("status", "expi
 CREATE INDEX "Reservation_eventId_idx" ON "Reservation"("eventId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ReservationSeat_reservationId_eventSeatId_key" ON "ReservationSeat"("reservationId", "eventSeatId");
+CREATE INDEX "ReservationSeat_reservationId_idx" ON "ReservationSeat"("reservationId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ReservationSeat_eventSeatId_isActive_key" ON "ReservationSeat"("eventSeatId", "isActive");
+CREATE INDEX "ReservationSeat_eventSeatId_isActive_idx" ON "ReservationSeat"("eventSeatId", "isActive");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ReservationSeat_reservationId_eventSeatId_key" ON "ReservationSeat"("reservationId", "eventSeatId");
 
 -- CreateIndex
 CREATE INDEX "AuditLog_reservationId_idx" ON "AuditLog"("reservationId");
