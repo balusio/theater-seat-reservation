@@ -34,6 +34,10 @@ procs:
     shell: "echo 'Dashboard: http://localhost:3000/monitoring' && curl -s http://localhost:3000/monitoring/stats | python3 -m json.tool"
     autostart: false
 
+  seed:
+    shell: npx tsx prisma/seed.ts
+    autostart: false
+
   reset-data:
     shell: pnpm dlx prisma migrate reset --force
     autostart: false
