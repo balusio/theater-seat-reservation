@@ -18,11 +18,11 @@ export class HealthController {
     private config: ConfigService,
   ) {
     this.sqsClient = new SQSClient({
-      region: this.config.get('AWS_REGION'),
-      endpoint: this.config.get('AWS_ENDPOINT'),
+      region: this.config.get<string>('AWS_REGION')!,
+      endpoint: this.config.get<string>('AWS_ENDPOINT')!,
       credentials: {
-        accessKeyId: this.config.get('AWS_ACCESS_KEY_ID'),
-        secretAccessKey: this.config.get('AWS_SECRET_ACCESS_KEY'),
+        accessKeyId: this.config.get<string>('AWS_ACCESS_KEY_ID')!,
+        secretAccessKey: this.config.get<string>('AWS_SECRET_ACCESS_KEY')!,
       },
     });
   }
@@ -32,7 +32,7 @@ export class HealthController {
   check() {
     return this.health.check([
       async (): Promise<HealthIndicatorResult> => {
-        await this.prisma.$queryRawUnsafe('SELECT 1');
+        await this.prisma.$queryRaw`SELECT 1`;
         return { database: { status: 'up' } };
       },
       async (): Promise<HealthIndicatorResult> => {

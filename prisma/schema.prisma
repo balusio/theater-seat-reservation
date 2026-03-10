@@ -4,5 +4,140 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+enum EventStatus {
+  SCHEDULED
+  OPEN
+  CLOSED
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  REJECTED
+}
+
+model Theater {
+  id            Int       @id @default(autoincrement())
+  name          String
+  address       String?
+  totalCapacity Int
+  createdAt     DateTime  @default(now())
+  sections      Section[]
+  events        Event[]
+}
+
+model Section {
+  id          Int    @id @default(autoincrement())
+  theaterId   Int
+  name        String
+  rows        Int
+  seatsPerRow Int
+  theater     Theater @relation(fields: [theaterId], references: [id])
+  seats       Seat[]
+
+  @@unique([theaterId, name])
+}
+
+model Seat {
+  id        Int    @id @default(autoincrement())
+  sectionId Int
+  row       String
+  number    Int
+  label     String?
+  section   Section    @relation(fields: [sectionId], references: [id])
+  eventSeats EventSeat[]
+
+  @@unique([sectionId, row, number])
+}
+
+model Event {
+  id           Int          @id @default(autoincrement())
+  theaterId    Int
+  title        String
+  startsAt     DateTime
+  endsAt       DateTime?
+  status       EventStatus  @default(SCHEDULED)
+  createdAt    DateTime     @default(now())
+  theater      Theater      @relation(fields: [theaterId], references: [id])
+  eventSeats   EventSeat[]
+  reservations Reservation[]
+
+  @@index([startsAt])
+  @@index([theaterId])
+}
+
+model EventSeat {
+  id               Int              @id @default(autoincrement())
+  eventId          Int
+  seatId           Int
+  status           SeatStatus       @default(AVAILABLE)
+  price            Decimal          @db.Decimal(10, 2)
+  updatedAt        DateTime         @updatedAt
+  event            Event            @relation(fields: [eventId], references: [id])
+  seat             Seat             @relation(fields: [seatId], references: [id])
+  reservationSeats ReservationSeat[]
+
+  @@unique([eventId, seatId])
+  @@index([eventId, status])
+}
+
+model Reservation {
+  id                 String            @id @default(uuid())
+  idempotencyKey     String?           @unique
+  eventId            Int
+  status             ReservationStatus @default(PENDING)
+  expiresAt          DateTime?
+  confirmedAt        DateTime?
+  cancelledAt        DateTime?
+  rejectedAt         DateTime?
+  rejectionReason    String?
+  cancellationReason String?
+  metadata           Json?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  event              Event             @relation(fields: [eventId], references: [id])
+  reservationSeats   ReservationSeat[]
+  auditLogs          AuditLog[]
+
+  @@index([status, expiresAt])
+  @@index([eventId])
+}
+
+model ReservationSeat {
+  id            Int         @id @default(autoincrement())
+  reservationId String
+  eventSeatId   Int
+  isActive      Boolean     @default(true)
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  eventSeat     EventSeat   @relation(fields: [eventSeatId], references: [id])
+
+  @@unique([reservationId, eventSeatId])
+  @@unique([eventSeatId, isActive])
+}
+
+model AuditLog {
+  id             Int          @id @default(autoincrement())
+  reservationId  String?
+  entityType     String
+  entityId       String
+  action         String
+  previousStatus String?
+  newStatus      String
+  triggeredBy    String
+  metadata       Json?
+  timestamp      DateTime     @default(now())
+  reservation    Reservation? @relation(fields: [reservationId], references: [id])
+
+  @@index([reservationId])
+  @@index([timestamp])
+  @@index([entityType, action])
 }
