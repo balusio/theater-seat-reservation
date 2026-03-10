@@ -28,6 +28,17 @@ export class ReservationService {
   async create(dto: CreateReservationDto) {
     return this.prisma.$transaction(async (tx) => {
       try {
+        // Idempotency: check if this key already created a reservation
+        const existing = await tx.reservation.findUnique({
+          where: { idempotencyKey: dto.idempotencyKey },
+          include: {
+            reservationSeats: {
+              include: { eventSeat: { include: { seat: true } } },
+            },
+          },
+        });
+        if (existing) return existing;
+
         const locked = await tx.eventSeat.updateMany({
           where: {
             id: { in: dto.seatIds },
