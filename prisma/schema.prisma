@@ -26,7 +26,7 @@ enum ReservationStatus {
 }
 
 model Theater {
-  id            Int       @id @default(autoincrement())
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name          String
   address       String?
   totalCapacity Int
@@ -36,8 +36,8 @@ model Theater {
 }
 
 model Section {
-  id          Int    @id @default(autoincrement())
-  theaterId   Int
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  theaterId   String  @db.Uuid
   name        String
   rows        Int
   seatsPerRow Int
@@ -48,26 +48,26 @@ model Section {
 }
 
 model Seat {
-  id        Int    @id @default(autoincrement())
-  sectionId Int
-  row       String
-  number    Int
-  label     String?
-  section   Section    @relation(fields: [sectionId], references: [id])
+  id         String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sectionId  String     @db.Uuid
+  row        String
+  number     Int
+  label      String?
+  section    Section    @relation(fields: [sectionId], references: [id])
   eventSeats EventSeat[]
 
   @@unique([sectionId, row, number])
 }
 
 model Event {
-  id           Int          @id @default(autoincrement())
-  theaterId    Int
+  id           String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  theaterId    String        @db.Uuid
   title        String
   startsAt     DateTime
   endsAt       DateTime?
-  status       EventStatus  @default(SCHEDULED)
-  createdAt    DateTime     @default(now())
-  theater      Theater      @relation(fields: [theaterId], references: [id])
+  status       EventStatus   @default(SCHEDULED)
+  createdAt    DateTime      @default(now())
+  theater      Theater       @relation(fields: [theaterId], references: [id])
   eventSeats   EventSeat[]
   reservations Reservation[]
 
@@ -76,14 +76,14 @@ model Event {
 }
 
 model EventSeat {
-  id               Int              @id @default(autoincrement())
-  eventId          Int
-  seatId           Int
-  status           SeatStatus       @default(AVAILABLE)
-  price            Decimal          @db.Decimal(10, 2)
-  updatedAt        DateTime         @updatedAt
-  event            Event            @relation(fields: [eventId], references: [id])
-  seat             Seat             @relation(fields: [seatId], references: [id])
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  eventId          String            @db.Uuid
+  seatId           String            @db.Uuid
+  status           SeatStatus        @default(AVAILABLE)
+  price            Decimal           @db.Decimal(10, 2)
+  updatedAt        DateTime          @updatedAt
+  event            Event             @relation(fields: [eventId], references: [id])
+  seat             Seat              @relation(fields: [seatId], references: [id])
   reservationSeats ReservationSeat[]
 
   @@unique([eventId, seatId])
@@ -91,9 +91,9 @@ model EventSeat {
 }
 
 model Reservation {
-  id                 String            @id @default(uuid())
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   idempotencyKey     String?           @unique
-  eventId            Int
+  eventId            String            @db.Uuid
   status             ReservationStatus @default(PENDING)
   expiresAt          DateTime?
   confirmedAt        DateTime?
@@ -113,25 +113,26 @@ model Reservation {
 }
 
 model ReservationSeat {
-  id            Int         @id @default(autoincrement())
-  reservationId String
-  eventSeatId   Int
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationId String      @db.Uuid
+  eventSeatId   String      @db.Uuid
   isActive      Boolean     @default(true)
   reservation   Reservation @relation(fields: [reservationId], references: [id])
   eventSeat     EventSeat   @relation(fields: [eventSeatId], references: [id])
 
   @@unique([reservationId, eventSeatId])
-  @@unique([eventSeatId, isActive])
+  @@index([reservationId])
+  @@index([eventSeatId, isActive])
 }
 
 model AuditLog {
-  id             Int          @id @default(autoincrement())
-  reservationId  String?
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reservationId  String?      @db.Uuid
   entityType     String
-  entityId       String
+  entityId       String       @db.Uuid
   action         String
   previousStatus String?
-  newStatus      String
+  newStatus      String?
   triggeredBy    String
   metadata       Json?
   timestamp      DateTime     @default(now())

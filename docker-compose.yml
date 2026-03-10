@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -12,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U reservation_user']
+      test: ['CMD-SHELL', 'pg_isready -U reservation_user -d reservation_db']
       interval: 5s
       retries: 5
 
