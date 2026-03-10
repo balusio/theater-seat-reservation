@@ -92,7 +92,7 @@ model EventSeat {
 
 model Reservation {
   id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  idempotencyKey     String?           @unique
+  idempotencyKey     String            @unique
   eventId            String            @db.Uuid
   status             ReservationStatus @default(PENDING)
   expiresAt          DateTime?

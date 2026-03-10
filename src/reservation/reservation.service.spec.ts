@@ -89,6 +89,7 @@ describe('ReservationService', () => {
 
   describe('create', () => {
     it('should create a PENDING reservation when seats are available', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
@@ -101,7 +102,7 @@ describe('ReservationService', () => {
 
       expect(result).toEqual(mockReservation);
       expect(tx.eventSeat.updateMany).toHaveBeenCalledWith({
-        where: { id: { in: SEAT_IDS }, status: 'AVAILABLE' },
+        where: { id: { in: SEAT_IDS }, eventId: EVENT_ID, status: 'AVAILABLE' },
         data: { status: 'HELD' },
       });
       expect(tx.reservation.create).toHaveBeenCalledWith(
@@ -125,6 +126,7 @@ describe('ReservationService', () => {
     });
 
     it('should throw ConflictException when not all seats are available', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 1 }); // only 1 of 2
 
       await expect(
@@ -136,13 +138,8 @@ describe('ReservationService', () => {
       ).rejects.toThrow(ConflictException);
     });
 
-    it('should return existing reservation on duplicate idempotencyKey (P2002)', async () => {
-      tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
-      const p2002Error: any = new Error('Unique constraint');
-      p2002Error.code = 'P2002';
-      p2002Error.meta = { target: ['idempotencyKey'] };
-      tx.reservation.create.mockRejectedValue(p2002Error);
-      tx.reservation.findUnique.mockResolvedValue(mockReservation);
+    it('should return existing reservation on duplicate idempotencyKey', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(mockReservation);
 
       const result = await service.create({
         idempotencyKey: IDEMPOTENCY_KEY,
@@ -151,14 +148,11 @@ describe('ReservationService', () => {
       });
 
       expect(result).toEqual(mockReservation);
-      expect(tx.reservation.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({
-          where: { idempotencyKey: IDEMPOTENCY_KEY },
-        }),
-      );
+      expect(prisma.$transaction).not.toHaveBeenCalled();
     });
 
-    it('should rethrow non-P2002 errors', async () => {
+    it('should rethrow errors from transaction', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockRejectedValue(new Error('DB down'));
 
@@ -172,6 +166,7 @@ describe('ReservationService', () => {
     });
 
     it('should set expiresAt based on TTL config', async () => {
+      prisma.reservation.findUnique.mockResolvedValue(null);
       tx.eventSeat.updateMany.mockResolvedValue({ count: 2 });
       tx.reservation.create.mockResolvedValue(mockReservation);
       tx.auditLog.create.mockResolvedValue({});
@@ -376,7 +371,7 @@ describe('ReservationService', () => {
       tx.eventSeat.updateMany.mockResolvedValue({});
       tx.reservationSeat.updateMany.mockResolvedValue({});
       tx.auditLog.create.mockResolvedValue({});
-      prisma.reservation.findUnique = jest.fn().mockResolvedValue({
+      tx.reservation.findUnique.mockResolvedValue({
         id: RESERVATION_ID,
         status: 'CANCELLED',
       });
@@ -419,7 +414,7 @@ describe('ReservationService', () => {
       tx.eventSeat.updateMany.mockResolvedValue({});
       tx.reservationSeat.updateMany.mockResolvedValue({});
       tx.auditLog.create.mockResolvedValue({});
-      prisma.reservation.findUnique = jest.fn().mockResolvedValue({
+      tx.reservation.findUnique.mockResolvedValue({
         id: RESERVATION_ID,
         status: 'CANCELLED',
       });
@@ -472,7 +467,7 @@ describe('ReservationService', () => {
       tx.eventSeat.updateMany.mockResolvedValue({});
       tx.reservationSeat.updateMany.mockResolvedValue({});
       tx.auditLog.create.mockResolvedValue({});
-      prisma.reservation.findUnique = jest.fn().mockResolvedValue({});
+      tx.reservation.findUnique.mockResolvedValue({});
 
       await service.cancel(RESERVATION_ID);
 

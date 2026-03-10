@@ -11,16 +11,16 @@ describe('SchedulerService', () => {
     tx = {
       reservation: {
         findMany: jest.fn(),
-        updateMany: jest.fn(),
+        update: jest.fn().mockResolvedValue({}),
       },
       eventSeat: {
-        updateMany: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({}),
       },
       reservationSeat: {
-        updateMany: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({}),
       },
       auditLog: {
-        createMany: jest.fn(),
+        create: jest.fn().mockResolvedValue({}),
       },
     };
 
@@ -47,13 +47,9 @@ describe('SchedulerService', () => {
     service = module.get(SchedulerService);
   });
 
-  it('should reject expired reservations past grace period', async () => {
+  it('should reject expired reservations past grace period using transitionReservation', async () => {
     const expiredIds = [{ id: 'res-1' }, { id: 'res-2' }];
     tx.reservation.findMany.mockResolvedValue(expiredIds);
-    tx.reservation.updateMany.mockResolvedValue({ count: 2 });
-    tx.eventSeat.updateMany.mockResolvedValue({ count: 4 });
-    tx.reservationSeat.updateMany.mockResolvedValue({ count: 4 });
-    tx.auditLog.createMany.mockResolvedValue({ count: 2 });
 
     await service.expireReservations();
 
@@ -61,30 +57,45 @@ describe('SchedulerService', () => {
     const findCall = tx.reservation.findMany.mock.calls[0][0];
     expect(findCall.where.status).toBe('PENDING');
     expect(findCall.where.expiresAt.lte).toBeInstanceOf(Date);
-    // Grace deadline should be ~2 min ago
     const graceDeadline = findCall.where.expiresAt.lte.getTime();
     const expected = Date.now() - 2 * 60 * 1000;
     expect(Math.abs(graceDeadline - expected)).toBeLessThan(1000);
 
-    expect(tx.reservation.updateMany).toHaveBeenCalledWith({
-      where: { id: { in: ['res-1', 'res-2'] } },
-      data: expect.objectContaining({ status: 'REJECTED' }),
+    // transitionReservation calls reservation.update per each expired id
+    expect(tx.reservation.update).toHaveBeenCalledTimes(2);
+    expect(tx.reservation.update).toHaveBeenCalledWith({
+      where: { id: 'res-1' },
+      data: expect.objectContaining({ status: 'REJECTED', rejectedAt: expect.any(Date) }),
     });
-    expect(tx.eventSeat.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'AVAILABLE' } }),
-    );
+    expect(tx.reservation.update).toHaveBeenCalledWith({
+      where: { id: 'res-2' },
+      data: expect.objectContaining({ status: 'REJECTED', rejectedAt: expect.any(Date) }),
+    });
+
+    // Seats released for each reservation
+    expect(tx.eventSeat.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.eventSeat.updateMany).toHaveBeenCalledWith({
+      where: { reservationSeats: { some: { reservationId: 'res-1' } } },
+      data: { status: 'AVAILABLE' },
+    });
+
+    // ReservationSeats deactivated for each
+    expect(tx.reservationSeat.updateMany).toHaveBeenCalledTimes(2);
     expect(tx.reservationSeat.updateMany).toHaveBeenCalledWith({
-      where: { reservationId: { in: ['res-1', 'res-2'] } },
+      where: { reservationId: 'res-1' },
       data: { isActive: false },
     });
-    expect(tx.auditLog.createMany).toHaveBeenCalledWith({
-      data: expect.arrayContaining([
-        expect.objectContaining({
-          reservationId: 'res-1',
-          triggeredBy: 'cron',
-          newStatus: 'REJECTED',
-        }),
-      ]),
+
+    // Audit logs created per each
+    expect(tx.auditLog.create).toHaveBeenCalledTimes(2);
+    expect(tx.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reservationId: 'res-1',
+        previousStatus: 'PENDING',
+        newStatus: 'REJECTED',
+        triggeredBy: 'cron',
+        metadata: { reason: 'reservation_timeout' },
+      }),
     });
   });
 
@@ -93,12 +104,11 @@ describe('SchedulerService', () => {
 
     await service.expireReservations();
 
-    expect(tx.reservation.updateMany).not.toHaveBeenCalled();
+    expect(tx.reservation.update).not.toHaveBeenCalled();
     expect(tx.eventSeat.updateMany).not.toHaveBeenCalled();
   });
 
   it('should not run concurrently (isRunning guard)', async () => {
-    // Simulate a slow transaction
     let resolveFirst: () => void;
     const firstPromise = new Promise<void>((r) => (resolveFirst = r));
     tx.reservation.findMany.mockImplementationOnce(() => firstPromise.then(() => []));
@@ -110,7 +120,18 @@ describe('SchedulerService', () => {
     await run1;
     await run2;
 
-    // findMany should only be called once
     expect(tx.reservation.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reset isRunning flag even on error', async () => {
+    tx.reservation.findMany.mockRejectedValue(new Error('DB error'));
+
+    await expect(service.expireReservations()).rejects.toThrow('DB error');
+
+    // isRunning should be reset, so next call should work
+    tx.reservation.findMany.mockResolvedValue([]);
+    await service.expireReservations();
+
+    expect(tx.reservation.findMany).toHaveBeenCalledTimes(2);
   });
 });

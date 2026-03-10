@@ -70,9 +70,11 @@ Cron:     WHERE expiresAt < NOW() - INTERVAL '2 minutes'
 
 ### Why idempotency lives on the Reservation table?
 
-The `idempotencyKey` is a `@unique` column on Reservation. When a duplicate request arrives, the INSERT fails with Prisma error `P2002`, and the service returns the existing reservation.
+The `idempotencyKey` is a `@unique` column on Reservation. Before starting a transaction, the service checks if a reservation with that key already exists — if so, it returns it immediately without touching any seats.
 
-A separate IdempotencyKey table with an interceptor was discarded because it operates outside the main transaction — three separate DB operations that can leave inconsistent state if the app crashes between them. With the column approach, everything is atomic: if the transaction commits, the key is saved; if it fails, the key doesn't exist.
+A separate IdempotencyKey table with an interceptor was discarded because it operates outside the main transaction — three separate DB operations that can leave inconsistent state if the app crashes between them. With the column approach, the key is part of the reservation itself: if the transaction commits, the key is saved; if it fails, the key doesn't exist.
+
+The confirmation endpoint also receives an `idempotencyKey` in the request body, used as the SQS message `id` for deduplication at the queue transport level. This is a different key from the reservation's — it prevents the same confirmation from being enqueued twice.
 
 ### Why CANCELLED vs REJECTED?
 
@@ -315,8 +317,8 @@ Health:     http://localhost:3000/health
 ### Running tests
 
 ```bash
-docker compose exec postgres createdb -U reservation_user reservation_test_db
-pnpm run test:e2e
+pnpm test          # unit tests
+pnpm test:cov      # with coverage report
 ```
 
 ---

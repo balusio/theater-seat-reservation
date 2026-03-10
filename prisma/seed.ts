@@ -1,20 +1,20 @@
 import 'dotenv/config';
 import { PrismaClient, Event } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { randomUUID } from 'crypto';
 
 const adapter = new PrismaPg({
   connectionString: process.env.DATABASE_URL!,
 });
 const prisma = new PrismaClient({ adapter });
 
+const SEED_THEATER_ID = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+
 async function main() {
-  const theaterId = randomUUID();
   const theater = await prisma.theater.upsert({
-    where: { id: theaterId },
+    where: { id: SEED_THEATER_ID },
     update: {},
     create: {
-      id: theaterId,
+      id: SEED_THEATER_ID,
       name: 'Grand Theater',
       address: '123 Broadway, New York, NY',
       totalCapacity: 170,
@@ -75,16 +75,17 @@ async function main() {
   inThreeDays.setHours(19, 30, 0, 0);
 
   const eventsData = [
-    { title: 'Hamlet', startsAt: tomorrow },
-    { title: 'Swan Lake', startsAt: inThreeDays },
+    { id: 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e', title: 'Hamlet', startsAt: tomorrow },
+    { id: 'c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f', title: 'Swan Lake', startsAt: inThreeDays },
   ];
 
   const events: Event[] = [];
   for (const e of eventsData) {
     const event = await prisma.event.upsert({
-      where: { id: randomUUID() },
+      where: { id: e.id },
       update: {},
       create: {
+        id: e.id,
         theaterId: theater.id,
         title: e.title,
         startsAt: e.startsAt,
