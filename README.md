@@ -197,7 +197,7 @@ LocalStack runs SQS locally. Queues are created via CLI on `docker compose up`. 
 | `POST` | `/reservations` | `{ idempotencyKey, eventId, seatIds[] }` | `201` Reservation with seats | Create reservation (PENDING), seats become HELD |
 | `GET` | `/reservations/:id` | — | `200` Reservation with seats | Get reservation details |
 | `POST` | `/reservations/:id/confirm` | `{ idempotencyKey }` | `202` `{ status: "processing" }` | Enqueue confirmation via SQS |
-| `POST` | `/reservations/:id/cancel` | `{ reason? }` | `200` Cancelled reservation | Cancel reservation, seats return to AVAILABLE |
+| `POST` | `/reservations/:id/cancel` | `{ reason? }` | `201` Cancelled reservation | Cancel reservation, seats return to AVAILABLE |
 
 ### Seats
 

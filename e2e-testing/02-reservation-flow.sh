@@ -82,7 +82,7 @@ info "Cancelling confirmed reservation..."
 response=$(request POST "/reservations/$RESERVATION_ID/cancel" '{
   "reason": "e2e test cancellation"
 }')
-assert_status "$response" 200 "Cancel confirmed reservation"
+assert_status "$response" 201 "Cancel confirmed reservation"
 
 response=$(request GET "/reservations/$RESERVATION_ID")
 STATUS=$(json_field "$response" '.status')

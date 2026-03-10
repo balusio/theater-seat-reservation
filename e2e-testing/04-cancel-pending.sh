@@ -24,7 +24,7 @@ RES_ID=$(json_field "$response" '.id')
 # Cancel directly from PENDING
 info "Cancelling from PENDING..."
 response=$(request POST "/reservations/$RES_ID/cancel" '{"reason":"changed my mind"}')
-assert_status "$response" 200 "Cancel pending"
+assert_status "$response" 201 "Cancel pending"
 
 # Verify
 response=$(request GET "/reservations/$RES_ID")

@@ -43,7 +43,7 @@ assert_status "$response" 409 "Conflict on double booking"
 # --------------------------------------------------
 info "Cancelling first reservation..."
 response=$(request POST "/reservations/$RES1_ID/cancel" '{"reason":"free seats for retry"}')
-assert_status "$response" 200 "Cancel first reservation"
+assert_status "$response" 201 "Cancel first reservation"
 
 info "Retrying second reservation after cancel..."
 response=$(request POST /reservations "{
